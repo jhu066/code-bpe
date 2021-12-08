@@ -1,5 +1,6 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
+#include <list>
 namespace bpe {
 
     struct pair_hash {
@@ -18,12 +19,18 @@ namespace bpe {
     class cBPEencoder {        
         public:
             int max_freq;
+
+            std::list<std::pair<int, int>> traces_buffer;
+            pc pair_count;
+            // two combined to be the learning product;
+            pc pair_to_id; // second step;
+            std::unordered_map<std::string, uint32_t> token_to_int; // first step ;
             
             // store intermediate result; "a;b;" -> "a-b;c" -> "a-b-c"
             std::vector<std::string> learn_buffer; 
             std::unordered_map<std::string, uint32_t> pattern_count; 
             // learning product 
-            std::unordered_map<std::string, uint32_t> token_to_int; 
+            
             std::unordered_map<std::string, uint32_t> decoder; 
             std::vector<std::string> int_to_token;
             // last stored vocab size
@@ -34,6 +41,7 @@ namespace bpe {
         ~cBPEencoder();
         
         void train();
+        void train1();
         std::string pctrace_to_idtrace(std::string pctrace, bool add_to_buffer);
         void debug_print();
         std::vector<std::string> get_train_set();

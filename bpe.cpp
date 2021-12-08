@@ -6,6 +6,7 @@
 #include <utility>
 #include <bits/stdc++.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include "bpe.h"
 // using nlohmann::json;
 
@@ -57,15 +58,147 @@ namespace bpe {
         int i; 
         std::ofstream otest("./trained_encoder/vocab.json");
         json j1;
-        for (i = 0; i < int_to_token.size(); i++) {
-            j1[int_to_token[i].c_str()] = i;
-        } 
+        // for (i = 0; i < int_to_token.size(); i++) {
+        //     j1[int_to_token[i].c_str()] = i;
+        // } 
+        for (auto t: pair_to_id) {
+            cout << t.first << endl;
+            return;
+        }
         otest << std::setw(4) << j1 << std::endl;
     }
     
+    void cBPEencoder::train1() {
+        std::chrono::steady_clock::time_point t1, t2, t3;
+        vector<size_t> delim_positions;
+        size_t pos, n_pos;
+        int lpair, rpair, i, tmp_rpair;
+        bool second;
+        string word1, word2; 
+        t1 = std::chrono::steady_clock::now();
+        // parsing into buffer and pair count 
+        for (auto pctrace: learn_buffer) {  
+            delim_positions.clear(); 
+            pos = 0;
+            while(pos != string::npos) {
+                delim_positions.push_back(pos);
+                pos = pctrace.find(";", pos + 1 );
+            }
+            second = false;
+            for (i = 0; i < delim_positions.size(); i++) {
+                word1 = pctrace.substr(delim_positions[i], delim_positions[i+1] - delim_positions[i]);
+                auto it = token_to_int.find(word1);
+                // see if new vocab 
+                if (it == token_to_int.end()) {
+                    int_to_token.push_back(word1);
+                    token_to_int[word1] = int_to_token.size() - 1;
+                } 
+                if (second) {
+                    lpair = rpair;
+                    rpair = token_to_int[word1];
+                    auto newpair = make_pair(lpair, rpair);
+                    traces_buffer.push_back(newpair);
+                    auto findpair = pair_count.find(newpair);
+                    if (findpair == pair_count.end()) {
+                        pair_count[newpair] = 1;
+                    } else {
+                        findpair->second += 1;
+                    }
+                } else {
+                    rpair = token_to_int[word1];
+                    second = true;
+                }             
+            }
+            
+        }
+        cout << "total pairs in buffer: " <<  traces_buffer.size() << endl;
+        cout << "uniq pairs with count: " <<  pair_count.size() << endl;
+        t2 = std::chrono::steady_clock::now();
+        std::cout << "Time took for parsing = " << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1e6 << "[s]" << std::endl;
+
+        // return;
+        
+        // find the replace the freq pattern in one pass 
+        int newid;
+        string tmppush;
+        for (auto pi: pair_count) {
+            if (pi.second > max_freq) { // new pattern to merge 
+                auto findpair = pair_to_id.find(pi.first);
+                if (findpair == pair_to_id.end()) {
+                    // tmppush = (pi.first).first + " " + (pi.first).second;
+                    // cout << (pi.first).first << " " <<  (pi.first).second;
+                    // return;
+                    // int_to_token.push_back((pi.first).first + " " + (pi.first).second);
+
+                    // newid = int_to_token.size() - 1;
+                    newid = int_to_token.size() + pair_to_id.size();
+                    pair_to_id[pi.first] = newid;
+                } 
+                
+                
+                int cnt = 0;
+                
+                for (auto cur=traces_buffer.begin(); cur!=traces_buffer.end(); ) {                                 
+                    if (*cur == pi.first) { 
+                        cnt += 1; 
+                        if (cur != traces_buffer.begin()) {
+                            auto prev = cur;
+                            prev--;
+                            if (prev->second == cur->first) { // make sure not the gap between traces 
+                                pair_count[*prev] -= 1; //vist count dec 
+                                prev->second = newid;
+                                // add new pattern if not exist 
+                                auto findpair = pair_count.find(*prev);
+                                if (findpair == pair_count.end()) {
+                                    pair_count[*prev] = 1;
+                                } else {
+                                    findpair->second += 1;
+                                }
+                            }
+                        }
+                        tmp_rpair = cur->second;
+                        cur = traces_buffer.erase(cur); // then point to next 
+
+                        if (cur != traces_buffer.end()) {
+                            if (cur->first == tmp_rpair) { // make sure it's not at the trace gap 
+                                pair_count[*cur] -= 1; //visit  count dec 
+                                cur->first = newid;
+                                // add new pattern if not exist 
+                                auto findpair = pair_count.find(*cur);
+                                if (findpair == pair_count.end()) {
+                                    pair_count[*cur] = 1;
+                                } else {
+                                    findpair->second += 1;
+                                }
+                            }
+                        }
+                        
+                    } else {
+                        cur++;
+                    }
+                }
+                
+            }
+
+        }
+
+        cout << "merged buffer " << traces_buffer.size() << endl;
+        cout << "unique pattern w/ cnt: " << pair_count.size() << endl;   
+        cout << "the end" << endl;
+
+        t3 = std::chrono::steady_clock::now();
+        std::cout << "Time took for replacing  = " << std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1e6 << "[s]" << std::endl;
+        save_model();
+        return;
+
+
+
+    }
 
 // construction zone ----------------------------
     void cBPEencoder::train() {
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point t1, t2, t3;
         // 1. get all raw vocab and pattern count 
         string word, wordpair;
         size_t pos, n_pos;
@@ -76,6 +209,7 @@ namespace bpe {
 
         while (1) {
             pattern_count.clear();
+            t1 = std::chrono::steady_clock::now();
             // 1. acquire all vocab & pattern 
             for (auto pctrace: learn_buffer) {    
                 delim_positions.clear();    
@@ -87,44 +221,67 @@ namespace bpe {
                 }
                 
                 for(i = 0; i < delim_positions.size()-2; i++) {
-                    word = pctrace.substr(delim_positions[i], delim_positions[i+1] - delim_positions[i]);
-                    wordpair = pctrace.substr(delim_positions[i], delim_positions[i+2] - delim_positions[i]);
+                    word = pctrace.substr(delim_positions[i], delim_positions[i+1] - delim_positions[i]);       // ;0x908
+                    wordpair = pctrace.substr(delim_positions[i], delim_positions[i+2] - delim_positions[i]);   
+                    // ;0x908;0x293 => ;0x908-0x293
 
                     // update vocab dict
-                    if (token_to_int.count(word) == 0) {
+                    if (token_to_int.find(word) == token_to_int.end()) {
                         int_to_token.push_back(word);
                         token_to_int[word] = int_to_token.size() - 1;
                     }
                     // update pattern count dict 
-                    if (pattern_count.count(wordpair) == 0) {
+                    auto it = pattern_count.find(wordpair);
+                    if (it == pattern_count.end()) {  
                         pattern_count[wordpair] = 1;
                     } else {
-                        pattern_count[wordpair] += 1;
+                        // pattern_count[wordpair] += 1; // TODO: 
+                        it->second += 1;
                     }
                 }
                 
             }
             
-            merged = 0;
+            t2 = std::chrono::steady_clock::now();
+            std::cout << "Time took for parsing = " << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1e6 << "[s]" << std::endl;
             
+            merged = 0;
+            int maxcount = 0;
+            vector<string> related;
             for (auto t: pattern_count) {
-                if (t.second > max_freq) {
-                    string replacement (t.first);
-                    replacement.replace(replacement.find(";", 1), 1, "-");
+                if (t.second > max_freq) { 
+                    string tmp (t.first.substr(1));
+                    pos = tmp.find(";", 1);                    
+                    if (find(related.begin(), related.end(), tmp.substr(0, pos)) != related.end()) {
+                        continue;
+                    }
+                    n_pos = tmp.find(";", pos+1);
+                    if (find(related.begin(), related.end(), tmp.substr(pos+1, n_pos-pos)) != related.end()) {
+                        continue;
+                    }
+                    related.push_back(tmp.substr(0, pos));
+                    related.push_back(tmp.substr(pos+1, n_pos-pos));
+                    string replacement (t.first); 
+                    replacement.replace(replacement.find(";", 1), 1, "-"); // replacement; 0x908-0x897
                     merged += 1;
-                    for (auto &trace: learn_buffer) {
-                        
+                    // 100 traces 
+                    for (auto &trace: learn_buffer) {                        
                         if (trace.find(t.first) != string::npos) {                            
                             findAndReplaceAll(trace, t.first, replacement); 
                         }              
                     }                    
                 }            
             }
-            cout << "round end, vocab size is: " << int_to_token.size() 
+            t3 = std::chrono::steady_clock::now();
+            std::cout << "Time took for replacing = " << std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1e6 << "[s]" << std::endl;
+            
+            cout << "round end, vocab size is: " << token_to_int.size() 
             << "  merged pattern " << merged << endl;
             
             if (merged == 0) break;
         }
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / 1e6 << "[s]" << std::endl;
         save_model();
 
     }
@@ -137,17 +294,17 @@ namespace bpe {
 
     }
     void cBPEencoder::debug_print() {
-        return;
+        // return;
         int i; 
         cout << "\n[HJ]:Print the vocabs, < token: id >: " << endl;
         for (i = 0; i < int_to_token.size(); i++) {
             printf("\t< %d: %s >\n", i, int_to_token[i].c_str());
         } 
 
-        cout << "\n[HJ]:Print the patterncount, < pair: count >: " << endl;
-        for (auto t: pattern_count) {
-            cout << "pattern: " << t.first << "; count: " << t.second << endl;            
-        }
+        // cout << "\n[HJ]:Print the patterncount, < pair: count >: " << endl;
+        // for (auto t: pattern_count) {
+        //     cout << "pattern: " << t.first << "; count: " << t.second << endl;            
+        // }
         save_model();
     }
 
